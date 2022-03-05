@@ -1,12 +1,12 @@
 use lazy_static::lazy_static;
-use std::{collections::HashMap, num};
+use std::sync::RwLock;
+use std::collections::HashMap;
 use Func::*;
 
 #[derive(Debug, Clone)]
 struct Type {
   arg_vec: Vec<usize>,
   vec: Vec<String>,
-  vec_orig: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -17,6 +17,7 @@ pub enum Func {
   Lt,
   If,
   nul,
+  one,
   Nul,
 }
 
@@ -26,24 +27,34 @@ lazy_static! {
     ("<", Lt,),
     ("?", If),
     ("₀", nul),
+    ("₁", one),
     ("⁰", Nul),
     ("-", Sub)
   ]
   .into_iter()
   .collect();
+  pub static ref LINE_FUNC_VEC: RwLock<Vec<Vec<String>>> = RwLock::new(vec![]);
 }
 
 fn main() {
-  let input = "? ₀ - ⁰ 1 ⁰ < ⁰ 3";
-  // if it's not 0, then return number otherwise return number + 1
+  let code = r###"? ₀ ₁ ⁰ ⁰ < ⁰ 3
++ ⁰ 1"###;
 
-  let input_vec = &mut input.split(" ").map(|s| s.to_string()).collect::<Vec<_>>();
-  let arg_vec = vec![1];
+  for line_func_str in code.split("\n") {
+    LINE_FUNC_VEC.write().unwrap().push(
+      line_func_str
+        .split(" ")
+        .map(str::to_string)
+        .collect::<Vec<_>>(),
+    );
+  }
+
+  let arg_vec = vec![5];
+  let line_func_beg = LINE_FUNC_VEC.read().unwrap()[0].clone();
 
   let mut typ = Type {
     arg_vec,
-    vec: input_vec.clone(),
-    vec_orig: input_vec.clone(),
+    vec: line_func_beg.clone(),
   };
 
   println!("{:?}", solve(&mut typ));
@@ -90,18 +101,21 @@ fn solve(typ: &mut Type) -> usize {
 
       Nul => typ.arg_vec[0],
 
-      nul => solve(&mut Type {
-        vec: typ.vec_orig.clone(),
-        vec_orig: typ.vec_orig.clone(),
-        arg_vec: (0..typ.arg_vec.len())
-          .map(|_| consume(typ))
-          .collect::<Vec<_>>(),
-      }),
-
+      nul => solve_line_func(0, typ),
+      one => solve_line_func(1, typ),
       _ => panic!("not implemented"),
     },
     None => top.parse::<usize>().unwrap(),
   }
+}
+
+fn solve_line_func(line: usize, typ: &mut Type) -> usize {
+  solve(&mut Type {
+    vec: LINE_FUNC_VEC.read().unwrap()[line].clone(),
+    arg_vec: (0..lf_param_count(line))
+      .map(|_| consume(typ))
+      .collect::<Vec<_>>(),
+  })
 }
 
 fn solve_lazy(typ: &mut Type) -> Vec<String> {
@@ -116,7 +130,8 @@ fn solve_lazy(typ: &mut Type) -> Vec<String> {
 
       If => solve_lazy_consume(typ, 3),
       Nul => vec![],
-      nul => solve_lazy_consume(typ, typ.arg_vec.len()),
+      nul => solve_lazy_consume(typ, lf_param_count(0)),
+      one => solve_lazy_consume(typ, lf_param_count(1)),
 
       _ => panic!("not implemented"),
     },
@@ -126,6 +141,20 @@ fn solve_lazy(typ: &mut Type) -> Vec<String> {
   vec_ret.into_iter().collect::<Vec<_>>()
 }
 
+fn lf_param_count(line: usize) -> usize {
+  let line_func_vec = LINE_FUNC_VEC.read().unwrap()[line].clone();
+  let num_hash: HashMap<&'static str, usize> = [("⁸", 5), ("⁶", 4), ("⁴", 3), ("²", 2), ("⁰", 1)]
+    .into_iter()
+    .collect();
+
+  match num_hash
+    .into_iter()
+    .find(|(s, _n)| line_func_vec.contains(&s.to_string()))
+  {
+    Some((_s, n)) => n,
+    None => 0,
+  }
+}
 fn solve_lazy_consume(typ: &mut Type, param_count: usize) -> Vec<String> {
   (0..param_count)
     .map(|_| solve_lazy(typ))
@@ -142,7 +171,6 @@ fn val(typ: Type) -> usize {
 fn consume_lazy(typ: &mut Type) -> Type {
   Type {
     arg_vec: typ.clone().arg_vec,
-    vec_orig: typ.clone().vec_orig,
     vec: solve_lazy(typ),
   }
 
@@ -150,18 +178,12 @@ fn consume_lazy(typ: &mut Type) -> Type {
 }
 
 fn consume(typ: &mut Type) -> usize {
-  // let mut vec_ret = vec![];
-
-  // for _ in 0..amount {
   let a = typ.vec.clone().into_iter().nth(0).unwrap();
   match a.parse::<usize>() {
     Ok(t) => {
       typ.vec.remove(0);
       t
     }
-    Err(_) => {
-      solve(typ)
-      // energy_solve(typ.vec_orig.clone() ,vec, arg_vec.clone())
-    }
+    Err(_) => solve(typ),
   }
 }
