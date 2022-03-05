@@ -1,12 +1,17 @@
 use lazy_static::lazy_static;
+use regex::Regex;
 use std::sync::RwLock;
 use std::collections::HashMap;
 use Func::*;
 
 #[derive(Debug, Clone)]
-struct Type {
-  arg_vec: Vec<usize>,
-  vec: Vec<String>,
+enum Type {
+  Num(usize),
+  Char(char),
+  Lazy {
+    arg_vec: Vec<Type>,
+    vec: Vec<String>,
+  }
 }
 
 #[derive(Debug)]
@@ -19,6 +24,7 @@ pub enum Func {
   nul,
   one,
   Nul,
+  Chr,
 }
 
 lazy_static! {
@@ -29,7 +35,8 @@ lazy_static! {
     ("₀", nul),
     ("₁", one),
     ("⁰", Nul),
-    ("-", Sub)
+    ("-", Sub),
+    ("c", Chr),
   ]
   .into_iter()
   .collect();
@@ -37,8 +44,9 @@ lazy_static! {
 }
 
 fn main() {
-  let code = r###"? ₀ ₁ ⁰ ⁰ < ⁰ 3
-+ ⁰ 1"###;
+  /* let code = r###"? ₀ ₁ ⁰ ⁰ < ⁰ 3
++ ⁰ 1"###; */
+  let code = r###"+ 69 c '3'"###;
 
   for line_func_str in code.split("\n") {
     LINE_FUNC_VEC.write().unwrap().push(
@@ -49,10 +57,10 @@ fn main() {
     );
   }
 
-  let arg_vec = vec![5];
+  let arg_vec = vec![Type::Num(1)];
   let line_func_beg = LINE_FUNC_VEC.read().unwrap()[0].clone();
 
-  let mut typ = Type {
+  let mut typ = Type::Lazy {
     arg_vec,
     vec: line_func_beg.clone(),
   };
@@ -60,37 +68,66 @@ fn main() {
   println!("{:?}", solve(&mut typ));
 }
 
-fn solve(typ: &mut Type) -> usize {
-  let top = typ.vec.remove(0);
+fn solve(typ: &mut Type) -> Type {
+  use Type::*;
+  let top = match typ {
+    Lazy {vec, ..} => {
+      vec.remove(0)
+    },
+
+    _ => unreachable!()
+  };
 
   match FUNC_HASH.get(&top.as_str()) {
     Some(f) => match f {
+      Chr => {
+        match consume(typ) {
+          Char(a) => {
+            Num(a as usize)
+          }
+          _ => unreachable!()
+        }
+      }
+
       Lt => {
-        let a = consume(typ);
-        let b = consume(typ);
-        if a < b {
-          1
-        } else {
-          0
+        match (consume(typ), consume(typ)) {
+          (Num(a), Num(b)) => {
+            if a < b {
+              Num(1)
+            } else {
+              Num(0)
+            }
+          }
+          _ => unreachable!()
         }
       }
 
       Sub => {
-        let a = consume(typ);
-        let b = consume(typ);
-        a - b
+        match (consume(typ), consume(typ)) {
+          (Num(a), Num(b)) => {
+            Num(a - b)
+          }
+          _ => unreachable!()
+        }
       }
 
       Add => {
-        let a = consume(typ);
-        let b = consume(typ);
-        a + b
+        match (consume(typ), consume(typ)) {
+          (Num(a), Num(b)) => {
+            Num(a + b)
+          }
+          _ => unreachable!()
+        }
       }
 
       If => {
         let tru = consume_lazy(typ);
         let fal = consume_lazy(typ);
-        let cond = consume(typ);
+        let cond = match consume(typ) {
+          Num(n) => n,
+
+          _ => unreachable!()
+        };
 
         if cond != 0 {
           val(tru)
@@ -99,27 +136,27 @@ fn solve(typ: &mut Type) -> usize {
         }
       }
 
-      Nul => typ.arg_vec[0],
+      Nul => match typ {
+        Lazy {arg_vec, ..} => arg_vec[0].clone(),
+        _ => unreachable!()
+      }
 
       nul => solve_line_func(0, typ),
       one => solve_line_func(1, typ),
       _ => panic!("not implemented"),
     },
-    None => top.parse::<usize>().unwrap(),
+    None => parse_token(top).unwrap()
   }
 }
 
-fn solve_line_func(line: usize, typ: &mut Type) -> usize {
-  solve(&mut Type {
-    vec: LINE_FUNC_VEC.read().unwrap()[line].clone(),
-    arg_vec: (0..lf_param_count(line))
-      .map(|_| consume(typ))
-      .collect::<Vec<_>>(),
-  })
-}
-
 fn solve_lazy(typ: &mut Type) -> Vec<String> {
-  let top = typ.vec.remove(0);
+  let top = match typ {
+    Type::Lazy {vec, ..} => {
+      vec.remove(0)
+    },
+
+    _ => unreachable!()
+  };
   let mut vec_ret = vec![top.clone()];
 
   vec_ret.extend(match FUNC_HASH.get(&top.as_str()) {
@@ -127,6 +164,7 @@ fn solve_lazy(typ: &mut Type) -> Vec<String> {
       Add => solve_lazy_consume(typ, 2),
       Sub => solve_lazy_consume(typ, 2),
       Lt => solve_lazy_consume(typ, 2),
+      Chr => solve_lazy_consume(typ, 1),
 
       If => solve_lazy_consume(typ, 3),
       Nul => vec![],
@@ -140,6 +178,16 @@ fn solve_lazy(typ: &mut Type) -> Vec<String> {
 
   vec_ret.into_iter().collect::<Vec<_>>()
 }
+
+fn solve_line_func(line: usize, typ: &mut Type) -> Type {
+  solve(&mut Type::Lazy {
+    vec: LINE_FUNC_VEC.read().unwrap()[line].clone(),
+    arg_vec: (0..lf_param_count(line))
+      .map(|_| consume(typ))
+      .collect::<Vec<_>>(),
+  })
+}
+
 
 fn lf_param_count(line: usize) -> usize {
   let line_func_vec = LINE_FUNC_VEC.read().unwrap()[line].clone();
@@ -162,28 +210,63 @@ fn solve_lazy_consume(typ: &mut Type, param_count: usize) -> Vec<String> {
     .collect::<Vec<_>>()
 }
 
-fn val(typ: Type) -> usize {
+fn val(typ: Type) -> Type {
   // println!("val my guy {typ:#?}");
   solve(&mut typ.clone())
   // todo!()
 }
 
 fn consume_lazy(typ: &mut Type) -> Type {
-  Type {
-    arg_vec: typ.clone().arg_vec,
+  Type::Lazy {
+    arg_vec: match typ.clone() {
+
+      Type::Lazy {arg_vec, ..} => {
+        arg_vec
+      },
+
+      _ => unreachable!()
+    },
     vec: solve_lazy(typ),
   }
 
   // todo!()
 }
 
-fn consume(typ: &mut Type) -> usize {
-  let a = typ.vec.clone().into_iter().nth(0).unwrap();
-  match a.parse::<usize>() {
-    Ok(t) => {
-      typ.vec.remove(0);
+fn consume(typ: &mut Type) -> Type {
+  let a = match typ.clone() {
+    Type::Lazy {vec, ..} => {
+      vec.clone().into_iter().nth(0).unwrap()
+    },
+
+    _ => unreachable!()
+  };
+
+  match parse_token(a) {
+    Some(t) => {
+      match typ {
+        Type::Lazy {vec, ..} => {
+          vec.remove(0)
+        },
+
+        _ => unreachable!()
+      };
       t
     }
-    Err(_) => solve(typ),
+
+    None => solve(typ)
+  }
+}
+
+fn parse_token(token: String) -> Option<Type> {
+  let num_re = Regex::new(r###"^(\d+)$"###).unwrap();
+  let char_re = Regex::new(r###"^'(.)'$"###).unwrap();
+  // let str = "'3'";
+  if let Some(cap) = num_re.captures(token.as_str()) {
+    Some(Type::Num(cap.get(1).unwrap().as_str().parse::<usize>().unwrap()))
+    // println!("{:#?}", cap.get(1).unwrap().as_str());
+  } else if let Some(cap) = char_re.captures(token.as_str()) {
+    Some(Type::Char(cap.get(1).unwrap().as_str().chars().nth(0).unwrap()))
+  } else {
+    None
   }
 }
