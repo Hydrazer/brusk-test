@@ -34,11 +34,11 @@ lazy_static! {
 }
 
 fn main() {
-  let input = "? ₀ + ⁰ 1 ⁰ < ⁰ 3";
+  let input = "? ₀ - ⁰ 1 ⁰ < ⁰ 3";
   // if it's not 0, then return number otherwise return number + 1
 
   let input_vec = &mut input.split(" ").map(|s| s.to_string()).collect::<Vec<_>>();
-  let arg_vec = vec![5];
+  let arg_vec = vec![1];
 
   let mut typ = Type {
     arg_vec,
@@ -62,6 +62,12 @@ fn solve(typ: &mut Type) -> usize {
         } else {
           0
         }
+      }
+
+      Sub => {
+        let a = consume(typ);
+        let b = consume(typ);
+        a - b
       }
 
       Add => {
@@ -105,6 +111,7 @@ fn solve_lazy(typ: &mut Type) -> Vec<String> {
   vec_ret.extend(match FUNC_HASH.get(&top.as_str()) {
     Some(f) => match f {
       Add => solve_lazy_consume(typ, 2),
+      Sub => solve_lazy_consume(typ, 2),
       Lt => solve_lazy_consume(typ, 2),
 
       If => solve_lazy_consume(typ, 3),
